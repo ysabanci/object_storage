@@ -15,6 +15,8 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
+var baseStorageDir string
+
 func initDB() *sql.DB {
 	dbUser := os.Getenv("DB_USER")
 	dbPass := os.Getenv("DB_PASS")
@@ -37,8 +39,9 @@ func initDB() *sql.DB {
 }
 
 func garbageCollector(db *sql.DB) {
-	for {
-		time.Sleep(1 * time.Hour)
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+	for range ticker.C {
 		log.Println("hatali kayit araniyor.")
 
 		rows, err := db.Query(`SELECT bucket, key FROM objects`)
@@ -82,15 +85,12 @@ func createTable(db *sql.DB) {
 		log.Fatal("Tablolar olusturulurken hata cikti: ", err)
 	}
 }
-
-const baseStorageDir = "/Users/ysabanci/Desktop/s3" //sabit dizin
-
 func addObject(w http.ResponseWriter, r *http.Request, db *sql.DB) { //dosya ekleme handleri
 
 	bucket := r.PathValue("bucket")
 	key := r.PathValue("key")
 
-	fullPath, err := pathControl(r.PathValue("bucket"), r.PathValue("key"))
+	fullPath, err := pathControl(bucket, key)
 	if err != nil {
 		http.Error(w, "Geçersiz yol", http.StatusBadRequest)
 		return
@@ -116,11 +116,11 @@ func addObject(w http.ResponseWriter, r *http.Request, db *sql.DB) { //dosya ekl
 		return
 	} //exception handling
 
-	contentType := r.Header.Get("Content-Type")
-	if contentType == "" {
-		contentType = mime.TypeByExtension(filepath.Ext(key)) // dosya uzantisina gore uzanti belirleyip kategorize ettigimiz kisim
+	contentType := r.Header.Get("Content-Type") // varsayılan curl değerini de bos kabul et
+	if contentType == "" || contentType == "application/x-www-form-urlencoded" {
+		contentType = mime.TypeByExtension(filepath.Ext(key))
 		if contentType == "" {
-			contentType = "application/octet-stream" // bilinmeyen dosyalari kayit ederiz.
+			contentType = "application/octet-stream"
 		}
 	} //header'dan content type cektigimiz kod blogu burasi
 
@@ -155,7 +155,7 @@ func deleteObject(w http.ResponseWriter, r *http.Request, db *sql.DB) { //dosya 
 	bucket := r.PathValue("bucket")
 	key := r.PathValue("key")
 
-	fullPath, err := pathControl(r.PathValue("bucket"), r.PathValue("key"))
+	fullPath, err := pathControl(bucket, key)
 	if err != nil {
 		http.Error(w, "Geçersiz yol", http.StatusBadRequest)
 		return
@@ -184,6 +184,11 @@ func pathControl(kovaAdi, dosyaYolu string) (string, error) { // guvenlik amacli
 }
 
 func main() {
+	baseStorageDir = os.Getenv("STORAGE_DIR")
+	if baseStorageDir == "" {
+		log.Fatal("STORAGE_DIR degiskeni tanimlanmalidir")
+	}
+
 	db := initDB()          //db initialiton
 	defer db.Close()        //main kapaninca dosyayi kapatir
 	createTable(db)         //tablo olusturma
