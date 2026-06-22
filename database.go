@@ -42,10 +42,14 @@ func garbageCollector(db *sql.DB) {
 			log.Println("Veritabanina baglanamadi", err)
 			continue // dongunun basina don
 		}
-		
+
 		for rows.Next() {
 			var bucket, key string
-			rows.Scan(&bucket, &key)
+			err = rows.Scan(&bucket, &key)
+			if err != nil {
+				log.Println("Satir okunamadi.", err)
+				continue
+			}
 			fullPath := filepath.Join(baseStorageDir, bucket, key)
 			_, err := os.Stat(fullPath)
 			if os.IsNotExist(err) {
@@ -57,7 +61,7 @@ func garbageCollector(db *sql.DB) {
 				}
 			}
 		}
-
+		rows.Close()
 	}
 }
 

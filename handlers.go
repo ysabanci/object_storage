@@ -62,16 +62,33 @@ func addObject(w http.ResponseWriter, r *http.Request, db *sql.DB) { //dosya ekl
 `
 	_, err = db.Exec(query, bucket, key, size, contentType)
 	if err != nil {
-		os.Remove(fullPath)
+		_ = os.Remove(fullPath)
 		http.Error(w, "Dosya diske yazıldı fakat metadata veritabanina eklenemedi", http.StatusInternalServerError)
 		return
 	}
 
 	w.WriteHeader(http.StatusCreated)
-	fmt.Fprintf(w, "Yaratma işlemi gerçekleştirildi.")
+	_, _ = fmt.Fprintf(w, "Yaratma işlemi gerçekleştirildi.")
 }
 
-func readObject(w http.ResponseWriter, r *http.Request, db *sql.DB) {
+// addObject fonksiyonumuz zaten MkdirAll sayesinde dosyaya ait tum pathi olusturur. bos bir kova olusturmak istenirse
+// diye bu fonksiyonu yazdim.
+func addBucket(w http.ResponseWriter, r *http.Request) {
+	bucket := r.PathValue("bucket")
+	folderPath, err := pathControl(bucket, "")
+	if err != nil {
+		http.Error(w, "Geçersiz kova adı", http.StatusBadRequest)
+		return
+	}
+	err = os.MkdirAll(folderPath, 0775)
+	if err != nil {
+		http.Error(w, "Kova olusturulamadi", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusCreated)
+}
+
+func readObject(w http.ResponseWriter, r *http.Request) {
 	fullPath, err := pathControl(r.PathValue("bucket"), r.PathValue("key"))
 	if err != nil {
 		http.Error(w, "Geçersiz yol", http.StatusBadRequest)
@@ -125,7 +142,7 @@ func listBuckets(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	}
 	w.Header().Set("Content-Type", "text/plain")
 	for _, value := range buckets {
-		fmt.Fprintln(w, value)
+		_, _ = fmt.Fprintln(w, value)
 	}
 }
 
@@ -150,7 +167,7 @@ func listObjects(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 			log.Println("Dosya okunamadi:", err)
 			continue
 		}
-		fmt.Fprintf(w, "%s | %d byte | %s | %s\n", key, size, contentType, createdAt.Format("2006-01-02 15:04"))
+		_, _ = fmt.Fprintf(w, "%s | %d byte | %s | %s\n", key, size, contentType, createdAt.Format("2006-01-02 15:04"))
 	}
 }
 
