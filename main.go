@@ -76,14 +76,19 @@ func main() {
 			deleteObject(w, r, db)
 		}))
 
-	mux.HandleFunc("GET /buckets/{bucket}/objects/{key...}", firewall(apiKey,
+	mux.HandleFunc("GET /buckets/{bucket}/objects/{key...}",
 		func(w http.ResponseWriter, r *http.Request) {
 			readObject(w, r, db)
-		}))
+		})
 
 	mux.HandleFunc("GET /buckets", firewall(apiKey,
 		func(w http.ResponseWriter, r *http.Request) {
 			listBuckets(w, r, db)
+		}))
+
+	mux.HandleFunc("POST /buckets/{bucket}/presign/{key...}", firewall(apiKey,
+		func(w http.ResponseWriter, r *http.Request) {
+			generatePresignedURL(w, r)
 		}))
 
 	fmt.Println("Sistem 8080 portunda çalışıyor...")

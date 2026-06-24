@@ -1,7 +1,10 @@
 package main
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -144,14 +148,55 @@ func addBucket(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 }
 
 func readObject(w http.ResponseWriter, r *http.Request, db *sql.DB) {
-	var exist bool
+	var isPublic bool //once kimlik dogrulanir
+
 	bucket := r.PathValue("bucket")
 	key := r.PathValue("key")
+
+	err := db.QueryRow("SELECT is_public FROM buckets WHERE name = $1", bucket).Scan(&isPublic)
+	if err != nil {
+		// Kova bulunamadıysa veya hata varsa güvenlik gereği "false" kabul et.
+		isPublic = false
+	}
+
+	if !isPublic {
+		apiKey := os.Getenv("API_KEY")
+		clientKey := r.Header.Get("X-API-Key")
+		isAuthorized := (clientKey == apiKey)
+
+		if !isAuthorized { //presigned url kontrolu
+			expires := r.URL.Query().Get("expires")
+			signature := r.URL.Query().Get("signature")
+
+			if expires != "" && signature != "" {
+				expiresInt, err := strconv.ParseInt(expires, 10, 64)
+				if err != nil {
+					sendJSONresponse(w, 400, "Hata", "Gecersiz zaman formati. Lutfen gecerli bir format kullanin.")
+					return
+				}
+				if time.Now().Unix() > expiresInt {
+					sendJSONresponse(w, 401, "Hata", "Linkin suresi dolmus.")
+					return
+				}
+				expectedSignature := createSignature(bucket, key, expires, apiKey)
+				if signature == expectedSignature {
+					isAuthorized = true
+				}
+			}
+		}
+		if !isAuthorized { //erisim reddi buradadir
+			sendJSONresponse(w, 401, "Hata", "Erisim reddedildi: Gecersiz yetki")
+			return
+		}
+	}
+
 	fullPath, err := pathControl(r.PathValue("bucket"), r.PathValue("key"))
 	if err != nil {
 		sendJSONresponse(w, 400, "Hata", "Gecersiz yol")
 		return
 	}
+	var exist bool //sonra varlik dogrulanir
+	
 	query := `SELECT EXISTS (SELECT 1 FROM objects WHERE bucket = $1 AND key = $2)`
 	err = db.QueryRow(query, bucket, key).Scan(&exist)
 	if err != nil {
@@ -163,6 +208,7 @@ func readObject(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 		sendJSONresponse(w, 404, "Hata", "Object not exist")
 		return
 	}
+
 	http.ServeFile(w, r, fullPath)
 
 }
@@ -284,4 +330,38 @@ func pathControl(kovaAdi, dosyaYolu string) (string, error) {
 		return "", fmt.Errorf("geçersiz yol:")
 	}
 	return fullPath, nil
+}
+
+// veriler birbirine karismasin (collision) diye aralarina belirgin bir ayrac koymak zorundayiz.
+func createSignature(bucket, key, expires, apiKey string) string {
+	message := fmt.Sprintf("%s:%s:%s", bucket, key, expires)
+
+	h := hmac.New(sha256.New, []byte(apiKey))
+	h.Write([]byte(message))
+
+	return hex.EncodeToString(h.Sum(nil))
+
+}
+
+func generatePresignedURL(w http.ResponseWriter, r *http.Request) {
+	bucket := r.PathValue("bucket")
+	key := r.PathValue("key")
+
+	//10 dk deadline verdik
+	expiresInSec := int64(600)
+
+	// gecerlilik suresini ekleyip stringe ceviriyoruz
+	expiresAt := time.Now().Unix() + expiresInSec
+	expiresStr := fmt.Sprintf("%d", expiresAt)
+
+	apiKey := os.Getenv("API_KEY")
+
+	// 4 argumani da hashlenmek uzere fonksiyona veriyoruz
+	signature := createSignature(bucket, key, expiresStr, apiKey)
+
+	// kullaniciya urlyi veriyoruz.
+	presignedURL := fmt.Sprintf("http://localhost:8080/buckets/%s/objects/%s?expires=%s&signature=%s",
+		bucket, key, expiresStr, signature)
+
+	sendJSONresponse(w, 200, "Basarili", presignedURL)
 }

@@ -82,6 +82,7 @@ func createTable(db *sql.DB) {
 	BucketQuery := `
 	CREATE TABLE IF NOT EXISTS buckets (
 		name VARCHAR(255) PRIMARY KEY,
+	    is_public BOOLEAN DEFAULT FALSE,
 		created_at TIMESTAMP DEFAULT NOW()
 	);`
 	_, err := db.Exec(BucketQuery)
