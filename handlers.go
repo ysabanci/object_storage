@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -13,6 +14,33 @@ import (
 	"time"
 )
 
+type ObjectInfo struct {
+	Key         string    `json:"dosya_adi"`
+	Size        int64     `json:"dosya_boyutu"`
+	ContentType string    `json:"dosya_tipi"`
+	CreatedAt   time.Time `json:"dosya_tarihi"`
+}
+type BucketInfo struct {
+	Buckets []string `json:"bucketlar"`
+}
+
+type APIResponse struct {
+	Durum string `json:"durum"`
+	Mesaj string `json:"mesaj"`
+}
+
+func sendJSONresponse(w http.ResponseWriter, statusCode int, durum string, mesaj string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	err := json.NewEncoder(w).Encode(APIResponse{
+		Durum: durum,
+		Mesaj: mesaj,
+	})
+	if err != nil {
+		log.Println("JSON response gonderilemedi:", err)
+	}
+}
+
 func addObject(w http.ResponseWriter, r *http.Request, db *sql.DB) { //dosya ekleme handleri
 
 	bucket := r.PathValue("bucket")
@@ -20,27 +48,43 @@ func addObject(w http.ResponseWriter, r *http.Request, db *sql.DB) { //dosya ekl
 
 	fullPath, err := pathControl(bucket, key)
 	if err != nil {
-		http.Error(w, "Geçersiz yol", http.StatusBadRequest)
+		sendJSONresponse(w, 400, "Hata", "Gecersiz yol")
 		return
 	}
 	folderPath := filepath.Dir(fullPath)
 
+	var exist bool
+
+	err = db.QueryRow(`
+	SELECT EXISTS(SELECT 1 FROM buckets WHERE name = $1)`, bucket).Scan(&exist)
+
+	if err != nil {
+		log.Println("Bucket sorgusu hatasi:", err)
+		sendJSONresponse(w, 500, "Hata", "Veritabani hatasi.")
+		return
+	}
+
+	if !exist {
+		sendJSONresponse(w, 404, "Hata", "Bucket mevcut degil, once kova olusturulmali.")
+		return
+	}
+
 	err = os.MkdirAll(folderPath, 0775) //folderPathi tum yolu baz alarak komple olusturur.
 	if err != nil {
-		http.Error(w, "Klasör oluşturma hatası", http.StatusInternalServerError)
+		sendJSONresponse(w, 500, "Hata", "Klasor olusturma hatasi")
 		return
 	}
 
 	newFile, err := os.Create(fullPath)
 	if err != nil {
-		http.Error(w, "Dosya oluşturma hatası", http.StatusInternalServerError)
+		sendJSONresponse(w, 500, "Hata", "Dosya olusturma hatasi")
 		return
 	}
 	defer newFile.Close()
 
 	size, err := io.Copy(newFile, r.Body)
 	if err != nil {
-		http.Error(w, "Dosya yükleme hatası", http.StatusInternalServerError)
+		sendJSONresponse(w, 500, "Hata", "Dosya yukleme hatasi")
 		return
 	} //exception handling
 
@@ -63,35 +107,57 @@ func addObject(w http.ResponseWriter, r *http.Request, db *sql.DB) { //dosya ekl
 	_, err = db.Exec(query, bucket, key, size, contentType)
 	if err != nil {
 		_ = os.Remove(fullPath)
-		http.Error(w, "Dosya diske yazıldı fakat metadata veritabanina eklenemedi", http.StatusInternalServerError)
-		return
+		sendJSONresponse(w, 500, "Hata", "Dosya diske yazıldı fakat metadata veritabanina eklenemedi.")
 	}
 
-	w.WriteHeader(http.StatusCreated)
-	_, _ = fmt.Fprintf(w, "Yaratma işlemi gerçekleştirildi.")
+	sendJSONresponse(w, 201, "Basarili", "Dosya basariyla eklendi.")
 }
 
 // addObject fonksiyonumuz zaten MkdirAll sayesinde dosyaya ait tum pathi olusturur. bos bir kova olusturmak istenirse
 // diye bu fonksiyonu yazdim.
-func addBucket(w http.ResponseWriter, r *http.Request) {
+func addBucket(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	bucket := r.PathValue("bucket")
 	folderPath, err := pathControl(bucket, "")
 	if err != nil {
-		http.Error(w, "Geçersiz kova adı", http.StatusBadRequest)
+		sendJSONresponse(w, 400, "Hata", "Gecersiz bucket yolu.")
 		return
 	}
 	err = os.MkdirAll(folderPath, 0775)
 	if err != nil {
-		http.Error(w, "Kova olusturulamadi", http.StatusInternalServerError)
+		sendJSONresponse(w, 500, "Hata", "Kova olusturulamadi.")
 		return
 	}
-	w.WriteHeader(http.StatusCreated)
+
+	query := `
+	INSERT INTO buckets (name) VALUES ($1) ON CONFLICT (name) DO NOTHING
+`
+	_, err = db.Exec(query, bucket)
+	if err != nil {
+		log.Println("Bucket veritabanina eklenemedi:", err)
+		sendJSONresponse(w, 500, "Hata", "Kova diskte olusturuldu ancak veritabanina kaydedilemedi.")
+		return
+	}
+	sendJSONresponse(w, 201, "Basarili", "Bucket basariyla olusturuldu.")
 }
 
-func readObject(w http.ResponseWriter, r *http.Request) {
+func readObject(w http.ResponseWriter, r *http.Request, db *sql.DB) {
+	var exist bool
+	bucket := r.PathValue("bucket")
+	key := r.PathValue("key")
 	fullPath, err := pathControl(r.PathValue("bucket"), r.PathValue("key"))
 	if err != nil {
-		http.Error(w, "Geçersiz yol", http.StatusBadRequest)
+		sendJSONresponse(w, 400, "Hata", "Gecersiz yol")
+		return
+	}
+	query := `SELECT EXISTS (SELECT 1 FROM objects WHERE bucket = $1 AND key = $2)`
+	err = db.QueryRow(query, bucket, key).Scan(&exist)
+	if err != nil {
+		log.Println("Veritabanindan okunamadi:", err)
+		sendJSONresponse(w, 500, "Hata", "Veritabani baglanti hatasi.")
+		return
+	}
+	if !exist {
+		sendJSONresponse(w, 404, "Hata", "Object not exist")
 		return
 	}
 	http.ServeFile(w, r, fullPath)
@@ -101,31 +167,46 @@ func readObject(w http.ResponseWriter, r *http.Request) {
 func deleteObject(w http.ResponseWriter, r *http.Request, db *sql.DB) { //dosya silen fonksiyon
 	bucket := r.PathValue("bucket")
 	key := r.PathValue("key")
-
 	fullPath, err := pathControl(bucket, key)
 	if err != nil {
-		http.Error(w, "Geçersiz yol", http.StatusBadRequest)
-		return
-	}
-	err = os.Remove(fullPath)
-	if err != nil {
-		http.Error(w, "Dosya silinemedi veya bulunamadı", http.StatusNotFound)
+		sendJSONresponse(w, 400, "Hata", "Gecersiz bucket yolu.")
 		return
 	}
 
 	query := `DELETE FROM objects WHERE bucket = $1 AND key = $2`
-	_, err = db.Exec(query, bucket, key)
+	result, err := db.Exec(query, bucket, key)
 	if err != nil {
 		log.Println("Veritabanindan silinemedi:", err)
+		sendJSONresponse(w, 500, "Hata", "Veritabani baglanti hatasi.")
+		return
 	}
 
-	w.WriteHeader(http.StatusNoContent)
+	// DELETE sorgusu gonderince aranan şarta (WHERE bucket = $1 AND key = $2) uyan satirlari arar.
+	// eger o isimde bir kova bulursa satiri siler. ben 1 satiri sildim diye cevap doner.
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		log.Println("Veritabani hesaplama hatasi.", err)
+		sendJSONresponse(w, 500, "Hata", "Sunucu hatasi, islem dogrulanamadi.")
+		return
+	}
+
+	if rowsAffected == 0 {
+		sendJSONresponse(w, 404, "Hata", "Boyle bir dosya bulunamadi.")
+		return
+	}
+
+	err = os.Remove(fullPath)
+	if err != nil {
+		log.Printf("Veritabani silindi fakat disk silinemedi: %s - Hata: %v\n", fullPath, err)
+	}
+
+	sendJSONresponse(w, 200, "Basarili", "Dosya basariyla silindi.")
 }
 
 func listBuckets(w http.ResponseWriter, r *http.Request, db *sql.DB) {
-	rows, err := db.Query(`SELECT DISTINCT bucket FROM objects`)
+	rows, err := db.Query(`SELECT name FROM buckets ORDER BY name ASC`)
 	if err != nil {
-		http.Error(w, "Bucketlar listelenemedi.", http.StatusInternalServerError)
+		sendJSONresponse(w, 500, "Hata", "Bucketlar listelenemedi.")
 		return
 	}
 	defer rows.Close()
@@ -135,14 +216,15 @@ func listBuckets(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 		var bucket string
 		err := rows.Scan(&bucket)
 		if err != nil {
-			log.Println("Satir okunamadi:", err)
+			log.Println("Bucket okunamadi", err)
 			continue
 		}
 		buckets = append(buckets, bucket)
 	}
-	w.Header().Set("Content-Type", "text/plain")
-	for _, value := range buckets {
-		_, _ = fmt.Fprintln(w, value)
+	w.Header().Set("Content-Type", "application/json")
+	err = json.NewEncoder(w).Encode(BucketInfo{Buckets: buckets})
+	if err != nil {
+		log.Println("JSON encode hatasi.", err)
 	}
 }
 
@@ -150,29 +232,37 @@ func listObjects(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	bucket := r.PathValue("bucket")
 	rows, err := db.Query(`SELECT key, size, content_type, created_at FROM objects WHERE bucket = $1`, bucket)
 	if err != nil {
-		http.Error(w, "Objectler listelenemedi.", http.StatusInternalServerError)
+		sendJSONresponse(w, 500, "Hata", "Objectler listelenemedi.")
 		return
 	}
 	defer rows.Close()
 
-	w.Header().Set("Content-Type", "text/plain")
+	w.Header().Set("Content-Type", "application/json")
+
+	var dosyalar []ObjectInfo
 
 	for rows.Next() {
-		var key string
-		var size int64
-		var contentType string
-		var createdAt time.Time
-		err := rows.Scan(&key, &size, &contentType, &createdAt)
+		var dosya ObjectInfo
+		err := rows.Scan(&dosya.Key, &dosya.Size, &dosya.ContentType, &dosya.CreatedAt)
 		if err != nil {
-			log.Println("Dosya okunamadi:", err)
+			log.Println("Dosya okunamadi", err)
 			continue
 		}
-		_, _ = fmt.Fprintf(w, "%s | %d byte | %s | %s\n", key, size, contentType, createdAt.Format("2006-01-02 15:04"))
+		dosyalar = append(dosyalar, dosya)
 	}
+	err = json.NewEncoder(w).Encode(dosyalar)
+	if err != nil {
+		log.Println("JSON encode hatasi.", err)
+	}
+
 }
 
 // guvenlik amacli path kontrolu, kod tekrari olmamasi icin fonksiyon olarak yazildi.
 func pathControl(kovaAdi, dosyaYolu string) (string, error) {
+	if strings.TrimSpace(kovaAdi) == "" {
+		return "", fmt.Errorf("Bucket adi bos olamaz veya bosluklardan olusamaz.")
+	}
+
 	fullPath := filepath.Join(baseStorageDir, kovaAdi, dosyaYolu)
 	if !strings.HasPrefix(fullPath, filepath.Clean(baseStorageDir)+string(os.PathSeparator)) {
 		return "", fmt.Errorf("geçersiz yol:")

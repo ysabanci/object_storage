@@ -23,7 +23,7 @@ func firewall(API_KEY string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		clientKey := r.Header.Get("X-API-Key")
 		if clientKey != API_KEY {
-			http.Error(w, "Gecersiz API anahtari", http.StatusUnauthorized)
+			sendJSONresponse(w, 401, "Hata", "Gecersiz API anahtari")
 			return
 		}
 		next(w, r)
@@ -54,11 +54,8 @@ func main() {
 
 	//Fonksiyonlara dependency injection eklendi, cunku mux 2 parametre bekliyordu ve db ekleyemiyordum. bundan sonra db parametresine de uygun sekilde calisir.
 	//Firewall isimli
-	//object(dosya) listeler
-	//list rotasi read rotasi ustune yazilmalidir cunku:
-	//mux uzun olana takilmadan once kisa olani yakalamasi gerekir
-	//GET /buckets/{bucket}/objects/{key...} rotasından once yaz. yoksa mux, readObject'e yönlendirir.
-	//mux AYNI http metotlari baz alinarak kisa path'ten uzun path'e yazilmalidir
+	// object(dosya) listeler
+	// mux daima en spesifik pathi secerek ilerler.
 	mux.HandleFunc("GET /buckets/{bucket}/objects", firewall(apiKey,
 		func(w http.ResponseWriter, r *http.Request) {
 			listObjects(w, r, db)
@@ -66,7 +63,7 @@ func main() {
 
 	mux.HandleFunc("PUT /buckets/{bucket}", firewall(apiKey,
 		func(w http.ResponseWriter, r *http.Request) {
-			addBucket(w, r)
+			addBucket(w, r, db)
 		}))
 
 	mux.HandleFunc("PUT /buckets/{bucket}/objects/{key...}", firewall(apiKey,
@@ -81,7 +78,7 @@ func main() {
 
 	mux.HandleFunc("GET /buckets/{bucket}/objects/{key...}", firewall(apiKey,
 		func(w http.ResponseWriter, r *http.Request) {
-			readObject(w, r)
+			readObject(w, r, db)
 		}))
 
 	mux.HandleFunc("GET /buckets", firewall(apiKey,
