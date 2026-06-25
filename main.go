@@ -91,6 +91,16 @@ func main() {
 			generatePresignedURL(w, r)
 		}))
 
+	mux.HandleFunc("DELETE /buckets/{bucket}", firewall(apiKey,
+		func(w http.ResponseWriter, r *http.Request) {
+			deleteBucket(w, r, db)
+		}))
+
+	mux.HandleFunc("PATCH /buckets/{bucket}/visibility", firewall(apiKey,
+		func(w http.ResponseWriter, r *http.Request) {
+			updateBucketVisibility(w, r, db)
+		}))
+	
 	fmt.Println("Sistem 8080 portunda çalışıyor...")
 	log.Fatal(http.ListenAndServe(":8080", mux))
 }
