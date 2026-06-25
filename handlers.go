@@ -22,26 +22,26 @@ import (
 var validBucketName = regexp.MustCompile(`^[a-z0-9-]+$`)  //ai
 var validObjectKey = regexp.MustCompile(`^[[:print:]]+$`) // ai
 type ObjectInfo struct {
-	Key         string    `json:"dosya_adi"`
-	Size        int64     `json:"dosya_boyutu"`
-	ContentType string    `json:"dosya_tipi"`
-	CreatedAt   time.Time `json:"dosya_tarihi"`
+	Key         string    `json:"key"`
+	Size        int64     `json:"size"`
+	ContentType string    `json:"content_type"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 type BucketInfo struct {
-	Buckets []string `json:"bucketlar"`
+	Buckets []string `json:"buckets"`
 }
 
 type APIResponse struct {
-	Durum string `json:"durum"`
-	Mesaj string `json:"mesaj"`
+	Status  string `json:"status"`
+	Message string `json:"message"`
 }
 
 func sendJSONresponse(w http.ResponseWriter, statusCode int, durum string, mesaj string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 	err := json.NewEncoder(w).Encode(APIResponse{
-		Durum: durum,
-		Mesaj: mesaj,
+		Status:  durum,
+		Message: mesaj,
 	})
 	if err != nil {
 		log.Println("JSON response gonderilemedi:", err)
@@ -55,7 +55,7 @@ func addObject(w http.ResponseWriter, r *http.Request, db *sql.DB) { //dosya ekl
 
 	fullPath, err := pathControl(bucket, key)
 	if err != nil {
-		sendJSONresponse(w, 400, "Hata", "Gecersiz yol")
+		sendJSONresponse(w, 400, "Error", "Invalid path")
 		return
 	}
 	folderPath := filepath.Dir(fullPath)
@@ -67,31 +67,31 @@ func addObject(w http.ResponseWriter, r *http.Request, db *sql.DB) { //dosya ekl
 
 	if err != nil {
 		log.Println("Bucket sorgusu hatasi:", err)
-		sendJSONresponse(w, 500, "Hata", "Veritabani hatasi.")
+		sendJSONresponse(w, 500, "Error", "Database error")
 		return
 	}
 
 	if !exist {
-		sendJSONresponse(w, 404, "Hata", "Bucket mevcut degil, once kova olusturulmali.")
+		sendJSONresponse(w, 404, "Error", "Bucket does not exist, bucket must be created first")
 		return
 	}
 
 	err = os.MkdirAll(folderPath, 0775) //folderPathi tum yolu baz alarak komple olusturur.
 	if err != nil {
-		sendJSONresponse(w, 500, "Hata", "Klasor olusturma hatasi")
+		sendJSONresponse(w, 500, "Error", "Failed to create directory")
 		return
 	}
 
 	newFile, err := os.Create(fullPath)
 	if err != nil {
-		sendJSONresponse(w, 500, "Hata", "Dosya olusturma hatasi")
+		sendJSONresponse(w, 500, "Error", "Failed to create file")
 		return
 	}
 	defer newFile.Close()
 
 	size, err := io.Copy(newFile, r.Body)
 	if err != nil {
-		sendJSONresponse(w, 500, "Hata", "Dosya yukleme hatasi")
+		sendJSONresponse(w, 500, "Error", "Failed to upload file")
 		return
 	} //exception handling
 
@@ -113,11 +113,12 @@ func addObject(w http.ResponseWriter, r *http.Request, db *sql.DB) { //dosya ekl
 `
 	_, err = db.Exec(query, bucket, key, size, contentType)
 	if err != nil {
+		newFile.Close()
 		_ = os.Remove(fullPath)
-		sendJSONresponse(w, 500, "Hata", "Dosya diske yazıldı fakat metadata veritabanina eklenemedi.")
+		sendJSONresponse(w, 500, "Error", "File written to disk but metadata could not be saved to database")
 	}
 
-	sendJSONresponse(w, 201, "Basarili", "Dosya basariyla eklendi.")
+	sendJSONresponse(w, 201, "Success", "File uploaded successfully")
 }
 
 // addObject fonksiyonumuz zaten MkdirAll sayesinde dosyaya ait tum pathi olusturur. bos bir kova olusturmak istenirse
@@ -126,12 +127,12 @@ func addBucket(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	bucket := r.PathValue("bucket")
 	folderPath, err := pathControl(bucket, "")
 	if err != nil {
-		sendJSONresponse(w, 400, "Hata", "Gecersiz bucket yolu.")
+		sendJSONresponse(w, 400, "Error", "Invalid bucket path")
 		return
 	}
 	err = os.MkdirAll(folderPath, 0775)
 	if err != nil {
-		sendJSONresponse(w, 500, "Hata", "Kova olusturulamadi.")
+		sendJSONresponse(w, 500, "Error", "Failed to create bucket")
 		return
 	}
 
@@ -141,10 +142,10 @@ func addBucket(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	_, err = db.Exec(query, bucket)
 	if err != nil {
 		log.Println("Bucket veritabanina eklenemedi:", err)
-		sendJSONresponse(w, 500, "Hata", "Kova diskte olusturuldu ancak veritabanina kaydedilemedi.")
+		sendJSONresponse(w, 500, "Error", "Bucket created on disk but could not be saved to database")
 		return
 	}
-	sendJSONresponse(w, 201, "Basarili", "Bucket basariyla olusturuldu.")
+	sendJSONresponse(w, 201, "Success", "Bucket created successfully")
 }
 
 func readObject(w http.ResponseWriter, r *http.Request, db *sql.DB) {
@@ -171,11 +172,11 @@ func readObject(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 			if expires != "" && signature != "" {
 				expiresInt, err := strconv.ParseInt(expires, 10, 64)
 				if err != nil {
-					sendJSONresponse(w, 400, "Hata", "Gecersiz zaman formati. Lutfen gecerli bir format kullanin.")
+					sendJSONresponse(w, 400, "Error", "Invalid time format. Please use a valid format")
 					return
 				}
 				if time.Now().Unix() > expiresInt {
-					sendJSONresponse(w, 401, "Hata", "Linkin suresi dolmus.")
+					sendJSONresponse(w, 401, "Error", "Link has expired")
 					return
 				}
 				expectedSignature := createSignature(bucket, key, expires, apiKey)
@@ -185,27 +186,27 @@ func readObject(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 			}
 		}
 		if !isAuthorized { //erisim reddi buradadir
-			sendJSONresponse(w, 401, "Hata", "Erisim reddedildi: Gecersiz yetki")
+			sendJSONresponse(w, 401, "Error", "Access denied: Invalid credentials")
 			return
 		}
 	}
 
 	fullPath, err := pathControl(r.PathValue("bucket"), r.PathValue("key"))
 	if err != nil {
-		sendJSONresponse(w, 400, "Hata", "Gecersiz yol")
+		sendJSONresponse(w, 400, "Error", "Invalid path")
 		return
 	}
 	var exist bool //sonra varlik dogrulanir
-	
+
 	query := `SELECT EXISTS (SELECT 1 FROM objects WHERE bucket = $1 AND key = $2)`
 	err = db.QueryRow(query, bucket, key).Scan(&exist)
 	if err != nil {
 		log.Println("Veritabanindan okunamadi:", err)
-		sendJSONresponse(w, 500, "Hata", "Veritabani baglanti hatasi.")
+		sendJSONresponse(w, 500, "Error", "Database connection error")
 		return
 	}
 	if !exist {
-		sendJSONresponse(w, 404, "Hata", "Object not exist")
+		sendJSONresponse(w, 404, "Error", "Object does not exist")
 		return
 	}
 
@@ -218,7 +219,7 @@ func deleteObject(w http.ResponseWriter, r *http.Request, db *sql.DB) { //dosya 
 	key := r.PathValue("key")
 	fullPath, err := pathControl(bucket, key)
 	if err != nil {
-		sendJSONresponse(w, 400, "Hata", "Gecersiz bucket yolu.")
+		sendJSONresponse(w, 400, "Error", "Invalid bucket path")
 		return
 	}
 
@@ -226,7 +227,7 @@ func deleteObject(w http.ResponseWriter, r *http.Request, db *sql.DB) { //dosya 
 	result, err := db.Exec(query, bucket, key)
 	if err != nil {
 		log.Println("Veritabanindan silinemedi:", err)
-		sendJSONresponse(w, 500, "Hata", "Veritabani baglanti hatasi.")
+		sendJSONresponse(w, 500, "Error", "Database connection error")
 		return
 	}
 
@@ -235,12 +236,12 @@ func deleteObject(w http.ResponseWriter, r *http.Request, db *sql.DB) { //dosya 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
 		log.Println("Veritabani hesaplama hatasi.", err)
-		sendJSONresponse(w, 500, "Hata", "Sunucu hatasi, islem dogrulanamadi.")
+		sendJSONresponse(w, 500, "Error", "Server error, operation could not be verified")
 		return
 	}
 
 	if rowsAffected == 0 {
-		sendJSONresponse(w, 404, "Hata", "Boyle bir dosya bulunamadi.")
+		sendJSONresponse(w, 404, "Error", "File not found")
 		return
 	}
 
@@ -249,18 +250,18 @@ func deleteObject(w http.ResponseWriter, r *http.Request, db *sql.DB) { //dosya 
 		log.Printf("Veritabani silindi fakat disk silinemedi: %s - Hata: %v\n", fullPath, err)
 	}
 
-	sendJSONresponse(w, 200, "Basarili", "Dosya basariyla silindi.")
+	sendJSONresponse(w, 200, "Success", "File deleted successfully")
 }
 
 func listBuckets(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	rows, err := db.Query(`SELECT name FROM buckets ORDER BY name ASC`)
 	if err != nil {
-		sendJSONresponse(w, 500, "Hata", "Bucketlar listelenemedi.")
+		sendJSONresponse(w, 500, "Error", "Failed to list buckets")
 		return
 	}
 	defer rows.Close()
 
-	var buckets []string
+	buckets := []string{}
 	for rows.Next() {
 		var bucket string
 		err := rows.Scan(&bucket)
@@ -281,14 +282,14 @@ func listObjects(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	bucket := r.PathValue("bucket")
 	rows, err := db.Query(`SELECT key, size, content_type, created_at FROM objects WHERE bucket = $1`, bucket)
 	if err != nil {
-		sendJSONresponse(w, 500, "Hata", "Objectler listelenemedi.")
+		sendJSONresponse(w, 500, "Error", "Failed to list objects")
 		return
 	}
 	defer rows.Close()
 
 	w.Header().Set("Content-Type", "application/json")
 
-	var dosyalar []ObjectInfo
+	dosyalar := []ObjectInfo{}
 
 	for rows.Next() {
 		var dosya ObjectInfo
@@ -359,9 +360,9 @@ func generatePresignedURL(w http.ResponseWriter, r *http.Request) {
 	// 4 argumani da hashlenmek uzere fonksiyona veriyoruz
 	signature := createSignature(bucket, key, expiresStr, apiKey)
 
-	// kullaniciya urlyi veriyoruz.
+	// kullaniciya url yi veriyoruz.
 	presignedURL := fmt.Sprintf("http://localhost:8080/buckets/%s/objects/%s?expires=%s&signature=%s",
 		bucket, key, expiresStr, signature)
 
-	sendJSONresponse(w, 200, "Basarili", presignedURL)
+	sendJSONresponse(w, 200, "Success", presignedURL)
 }

@@ -36,11 +36,11 @@ type ObjectTarget struct {
 }
 
 func garbageCollector(db *sql.DB) {
-	ticker := time.NewTicker(15 * time.Second)
+	ticker := time.NewTicker(24 * time.Hour)
 	defer ticker.Stop()
 	for range ticker.C {
 		log.Println("hatali kayit araniyor.")
-
+		saveAndclean(db)
 	}
 }
 func saveAndclean(db *sql.DB) {
@@ -50,6 +50,7 @@ func saveAndclean(db *sql.DB) {
 
 	if err != nil {
 		log.Println("Veritabanina baglanamadi", err)
+		return
 	}
 	defer rows.Close()
 
@@ -62,7 +63,6 @@ func saveAndclean(db *sql.DB) {
 		}
 		targets = append(targets, ObjectTarget{Bucket: bucket, Key: key})
 	}
-	rows.Close()
 
 	for _, t := range targets {
 		fullPath := filepath.Join(baseStorageDir, t.Bucket, t.Key)

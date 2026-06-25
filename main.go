@@ -23,7 +23,7 @@ func firewall(API_KEY string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		clientKey := r.Header.Get("X-API-Key")
 		if clientKey != API_KEY {
-			sendJSONresponse(w, 401, "Hata", "Gecersiz API anahtari")
+			sendJSONresponse(w, 401, "Error", "Invalid API key")
 			return
 		}
 		next(w, r)
