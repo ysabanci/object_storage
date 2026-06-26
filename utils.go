@@ -17,6 +17,7 @@ import (
 
 var validBucketName = regexp.MustCompile(`^[a-z0-9-]+$`)  //ai
 var validObjectKey = regexp.MustCompile(`^[[:print:]]+$`) // ai
+
 type ObjectInfo struct {
 	Key         string    `json:"key"`
 	Size        int64     `json:"size"`
@@ -47,13 +48,13 @@ func sendJSONresponse(w http.ResponseWriter, statusCode int, durum string, mesaj
 // guvenlik amacli path kontrolu, kod tekrari olmamasi icin fonksiyon olarak yazildi.
 func pathControl(kovaAdi, dosyaYolu string) (string, error) {
 	if strings.TrimSpace(kovaAdi) == "" {
-		return "", fmt.Errorf("Bucket adi bos olamaz veya bosluklardan olusamaz.") //bosluk kontrolu basta yapilsin
+		return "", fmt.Errorf("bucket adi bos olamaz veya bosluklardan olusamaz") //bosluk kontrolu basta yapilsin
 	}
 	if len(kovaAdi) < 3 || len(kovaAdi) > 63 {
-		return "", fmt.Errorf("Kova adi en az 3, en fazla 63 karakter olmalidir.") //uzunluk kontrolu
+		return "", fmt.Errorf("kova adi en az 3, en fazla 63 karakter olmalidir") //uzunluk kontrolu
 	}
 	if !validBucketName.MatchString(kovaAdi) {
-		return "", fmt.Errorf("Kova adi sadece kucuk harf, rakam ve tire icerebilir.") //matchstring dogruysa true degilse false doner
+		return "", fmt.Errorf("kova adi sadece kucuk harf, rakam ve tire icerebilir") //matchstring dogruysa true degilse false doner
 	}
 
 	//hasprefix on eke bakar, verilen stringi basta arar
@@ -61,11 +62,12 @@ func pathControl(kovaAdi, dosyaYolu string) (string, error) {
 	//contains icinde arar , verilen stringi icinde arar
 	//s3 klonu olmak acisindan regex kurallarini da aldim.
 	if strings.HasPrefix(kovaAdi, "-") || strings.HasSuffix(kovaAdi, "-") || strings.Contains(kovaAdi, "--") {
-		return "", fmt.Errorf("Kova adi tire ile baslayamaz, bitemez veya iki tire yanyana olamaz.")
+		return "", fmt.Errorf("kova adi tire ile baslayamaz, bitemez veya iki tire yanyana olamaz")
 	}
-	fullPath := filepath.Join(baseStorageDir, kovaAdi, dosyaYolu)
-	if !strings.HasPrefix(fullPath, filepath.Clean(baseStorageDir)+string(os.PathSeparator)) {
-		return "", fmt.Errorf("geçersiz yol:")
+	fullPath := filepath.Clean(filepath.Join(baseStorageDir, kovaAdi, dosyaYolu))
+	bucketPath := filepath.Clean(filepath.Join(baseStorageDir, kovaAdi))
+	if fullPath != bucketPath && !strings.HasPrefix(fullPath, bucketPath+string(os.PathSeparator)) {
+		return "", fmt.Errorf("geçersiz yol")
 	}
 	return fullPath, nil
 }

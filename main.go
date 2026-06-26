@@ -10,6 +10,19 @@ import (
 	"github.com/joho/godotenv"
 )
 
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-API-Key")
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 var baseStorageDir string
 
 // next http.handlerfunc hedeftir, sifre dogruysa nereye gilicegini soyluyoruz. kisaca w,r parametresi alan standart bir fonksiyon
@@ -19,10 +32,10 @@ var baseStorageDir string
 // -> fonksiyon sifreye bakar
 // ->sifre dogruysa asil hedef olan 'next(w,r)' cagirilir ve islem gerceklesir."
 // mux.HandleFunc("GET /buckets", firewall(apiKey, func(w, r) { ... }))
-func firewall(API_KEY string, next http.HandlerFunc) http.HandlerFunc {
+func firewall(apiKey string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		clientKey := r.Header.Get("X-API-Key")
-		if clientKey != API_KEY {
+		if clientKey != apiKey {
 			sendJSONresponse(w, 401, "Error", "Invalid API key")
 			return
 		}
@@ -100,7 +113,8 @@ func main() {
 		func(w http.ResponseWriter, r *http.Request) {
 			updateBucketVisibility(w, r, db)
 		}))
-	
+
+
 	fmt.Println("Sistem 8080 portunda çalışıyor...")
-	log.Fatal(http.ListenAndServe(":8080", mux))
+	log.Fatal(http.ListenAndServe(":8080", corsMiddleware(mux)))
 }

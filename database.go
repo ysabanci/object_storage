@@ -63,6 +63,9 @@ func saveAndclean(db *sql.DB) {
 		}
 		targets = append(targets, ObjectTarget{Bucket: bucket, Key: key})
 	}
+	if err := rows.Err(); err != nil {
+		log.Println("Döngü sırasında hata oluştu:", err)
+	}
 
 	for _, t := range targets {
 		fullPath := filepath.Join(baseStorageDir, t.Bucket, t.Key)

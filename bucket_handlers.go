@@ -96,6 +96,9 @@ func listBuckets(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 		}
 		buckets = append(buckets, bucket)
 	}
+	if err := rows.Err(); err != nil {
+		log.Println("Döngü sırasında hata oluştu:", err)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	err = json.NewEncoder(w).Encode(BucketInfo{Buckets: buckets})
 	if err != nil {
@@ -111,10 +114,10 @@ func updateBucketVisibility(w http.ResponseWriter, r *http.Request, db *sql.DB) 
 		sendJSONresponse(w, 400, "Error", "Invalid 'public' parameter. It must be 'true' or 'false'")
 		return
 	}
-	is_public := publicStr == "true"
+	isPublic := publicStr == "true"
 
 	query := "UPDATE buckets SET is_public = $1 WHERE name = $2"
-	result, err := db.Exec(query, is_public, bucket)
+	result, err := db.Exec(query, isPublic, bucket)
 
 	if err != nil {
 		log.Println("Bucket visibility guncellenemedi:", err)
@@ -135,7 +138,7 @@ func updateBucketVisibility(w http.ResponseWriter, r *http.Request, db *sql.DB) 
 	}
 
 	var statusMsg string
-	if is_public {
+	if isPublic {
 		statusMsg = "Bucket is now PUBLIC. Anyone can read its objects."
 	} else {
 		statusMsg = "Bucket is now PRIVATE. API Key is required."

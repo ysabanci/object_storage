@@ -105,7 +105,7 @@ func readObject(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	if !isPublic {
 		apiKey := os.Getenv("API_KEY")
 		clientKey := r.Header.Get("X-API-Key")
-		isAuthorized := (clientKey == apiKey)
+		isAuthorized := clientKey == apiKey
 
 		if !isAuthorized { //presigned url kontrolu
 			expires := r.URL.Query().Get("expires")
@@ -138,20 +138,20 @@ func readObject(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 		sendJSONresponse(w, 400, "Error", "Invalid path")
 		return
 	}
-	var exist bool //sonra varlik dogrulanir
+	var contentType string //sonra varlik dogrulanir ve type cekilir
 
-	query := `SELECT EXISTS (SELECT 1 FROM objects WHERE bucket = $1 AND key = $2)`
-	err = db.QueryRow(query, bucket, key).Scan(&exist)
-	if err != nil {
+	query := `SELECT content_type FROM objects WHERE bucket = $1 AND key = $2`
+	err = db.QueryRow(query, bucket, key).Scan(&contentType)
+	if err == sql.ErrNoRows {
+		sendJSONresponse(w, 404, "Error", "Object does not exist")
+		return
+	} else if err != nil {
 		log.Println("Veritabanindan okunamadi:", err)
 		sendJSONresponse(w, 500, "Error", "Database connection error")
 		return
 	}
-	if !exist {
-		sendJSONresponse(w, 404, "Error", "Object does not exist")
-		return
-	}
 
+	w.Header().Set("Content-Type", contentType)
 	http.ServeFile(w, r, fullPath)
 
 }
@@ -216,6 +216,9 @@ func listObjects(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 			continue
 		}
 		dosyalar = append(dosyalar, dosya)
+	}
+	if err := rows.Err(); err != nil {
+		log.Println("Döngü sırasında hata oluştu:", err)
 	}
 	err = json.NewEncoder(w).Encode(dosyalar)
 	if err != nil {
